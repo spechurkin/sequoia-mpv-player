@@ -1,0 +1,15 @@
+{
+  "release": "20261021",
+  "version": "v0.41.0-1227-ge471496c5",
+  "recipes": "https://github.com/shinchiro/mpv-winbuild-cmake/tree/20261021",
+  "archives": {
+    "x86_64": {
+      "url": "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-x86_64-20261021-git-e471496c56.7z",
+      "sha256": "4a355f3e89c83fabc730d33fb4e759dfec747806ed2287b61a90d1681b83e8d3"
+    },
+    "aarch64": {
+      "url": "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-aarch64-20261021-git-e471496c56.7z",
+      "sha256": "aa3974b4c7dea2a05eea1198cce0318f195f01c599df203f76431cb4ca5994cc"
+    }
+  }
+}

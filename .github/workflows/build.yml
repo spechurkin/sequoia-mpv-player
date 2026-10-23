@@ -1,0 +1,167 @@
+name: Build Sequoia
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: '1.88.0'
+
+jobs:
+  native:
+    name: ${{ matrix.runner }} / ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: windows-2022, target: x86_64-pc-windows-msvc, platform: windows, minimum: '10' }
+          - { runner: windows-2025, target: x86_64-pc-windows-msvc, platform: windows, minimum: '10' }
+          - { runner: windows-11-arm, target: aarch64-pc-windows-msvc, platform: windows, minimum: '11' }
+          - { runner: macos-26, target: aarch64-apple-darwin, platform: macos, minimum: '11.0' }
+          - { runner: macos-26-intel, target: x86_64-apple-darwin, platform: macos, minimum: '10.14' }
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.platform == 'macos' && matrix.minimum || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        shell: bash
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt --target '${{ matrix.target }}'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ matrix.runner }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}
+      - name: Test
+        shell: bash
+        run: cargo +"$RUST_VERSION" test --locked --target '${{ matrix.target }}'
+      - name: Test Windows updater
+        if: matrix.platform == 'windows'
+        shell: powershell
+        run: ./tests/updater.ps1
+      - name: Test Windows installation
+        if: matrix.platform == 'windows'
+        shell: powershell
+        run: ./tests/windows-integration.ps1
+      - name: Test packaging
+        shell: bash
+        run: python3 -m unittest discover -s tests -p 'test_packaging.py'
+      - name: Build release
+        shell: bash
+        run: cargo +"$RUST_VERSION" build --release --locked --target '${{ matrix.target }}'
+      - name: Prepare Windows playback engine
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: ./scripts/fetch-mpv.ps1 -Target '${{ matrix.target }}'
+      - name: Prepare macOS playback engine
+        if: matrix.platform == 'macos'
+        run: |
+          brew update
+          brew install mpv dylibbundler
+          brew upgrade mpv dylibbundler
+      - name: Package
+        shell: bash
+        run: |
+          if [[ '${{ matrix.platform }}' == windows ]]; then
+            engine="$SEQUOIA_MPV_DIR"
+          else
+            engine="$(command -v mpv)"
+          fi
+          python3 scripts/package-ci.py --target '${{ matrix.target }}' --label '${{ matrix.runner }}' --minimum '${{ matrix.minimum }}' --mpv "$engine"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sequoia-${{ matrix.runner }}-${{ matrix.target }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ native, linux ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os, re, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('Cargo.toml').read_text())['package']['version']
+          tag = os.environ['RELEASE_TAG']
+          assert re.fullmatch(r'v[0-9]+\.[0-9]+(?:\.[0-9]+)?', tag), 'Tag must use vX.Y or vX.Y.Z format'
+          tag_version = tag[1:]
+          if tag_version.count('.') == 1:
+              tag_version += '.0'
+          assert tag_version == version, 'Tag must match Cargo.toml version (vX.Y means X.Y.0)'
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Publish release archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" release-assets/* --title "Sequoia ${RELEASE_TAG#v}" --verify-tag --generate-notes --draft
+          gh release edit "$RELEASE_TAG" --draft=false
+
+  linux:
+    name: Ubuntu ${{ matrix.version }} / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [ '18.04', '20.04', '22.04', '24.04', '26.04' ]
+        arch: [ x86_64, aarch64 ]
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and test in the target distribution
+        shell: bash
+        env:
+          UBUNTU_VERSION: ${{ matrix.version }}
+          RUST_TARGET: ${{ matrix.target }}
+        run: |
+          docker run --rm \
+            -e RUST_VERSION -e RUST_TARGET -e UBUNTU_VERSION \
+            -v "$GITHUB_WORKSPACE:/work" -w /work \
+            "ubuntu:$UBUNTU_VERSION" bash scripts/ci-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sequoia-ubuntu-${{ matrix.version }}-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14

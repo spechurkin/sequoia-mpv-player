@@ -1,0 +1,12 @@
+.tools/
+/.idea/
+**/bin/
+**/obj/
+dist/
+/artifacts/
+/examples/
+*.user
+/target/
+/tools/unpack-mpv/target/
+/self-test-result.txt
+__pycache__/
