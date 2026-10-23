@@ -21,6 +21,28 @@ runtime_spec.loader.exec_module(runtime)
 
 
 class PackagingTests(unittest.TestCase):
+    def test_duplicate_macos_rpaths_keep_one_search_path(self):
+        for deletes_all in [False, True]:
+            with self.subTest(deletes_all=deletes_all):
+                paths = ['@executable_path/lib/', '/other path', '@executable_path/lib/', '@executable_path/lib/']
+
+                def run(*args):
+                    if args[0] == 'otool':
+                        return '\n'.join('cmd LC_RPATH\n cmdsize 48\n path ' + path + ' (offset 12)'
+                                         for path in paths)
+                    if args[1] == '-delete_rpath':
+                        if deletes_all:
+                            paths[:] = [path for path in paths if path != args[2]]
+                        else:
+                            paths.remove(args[2])
+                    elif args[1] == '-add_rpath':
+                        paths.append(args[2])
+                    return ''
+
+                with patch.object(package.bundle_mpv, 'run', side_effect=run):
+                    package.bundle_mpv.deduplicate_macos_rpaths(Path('mpv'))
+                self.assertEqual(sorted(paths), sorted(['@executable_path/lib/', '/other path']))
+
     def test_vulkan_architecture_and_notices(self):
         assets = json.loads((SCRIPTS / 'engine-runtime.json').read_text())
         for target in ['x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc']:
@@ -80,11 +102,11 @@ class PackagingTests(unittest.TestCase):
                     member.mode = 0o755
                     handle.addfile(member, io.BytesIO(data))
             runtime.extract(asset, archive, root / 'source', False)
-            with patch.object(package.bundle_mpv, 'run') as command:
+            with patch.object(package.bundle_mpv, 'run', return_value='') as command:
                 package.bundle_mpv.bundle(root / 'source/mpv', root / 'engine', 'x86_64-apple-darwin')
             self.assertEqual((root / 'engine/lib/libavcodec.dylib').read_bytes(), b'library')
             self.assertTrue((root / 'engine/source-build.json').is_file())
-            self.assertTrue(all(call.args[0] == 'codesign' for call in command.call_args_list))
+            self.assertTrue(all(call.args[0] in ('codesign', 'otool') for call in command.call_args_list))
 
     def test_windows_update_manifest_and_archive(self):
         with tempfile.TemporaryDirectory() as directory:

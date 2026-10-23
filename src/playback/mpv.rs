@@ -109,7 +109,7 @@ impl Mpv {
             "--input-default-bindings=no",
             "--input-vo-keyboard=no",
             "--input-cursor=no",
-            "--hwdec=auto-safe",
+            "--hwdec=auto",
             "--volume-max=150",
         ])
             .arg(format!("--input-ipc-server={pipe}"))

@@ -5,11 +5,29 @@ import shutil
 import subprocess
 import tempfile
 import wave
+from collections import Counter
 from pathlib import Path
 
 
 def run(*args, **kwargs):
     return subprocess.check_output(args, universal_newlines=True, **kwargs)
+
+
+def macos_rpaths(binary):
+    return re.findall(r'\bcmd LC_RPATH\s+cmdsize \d+\s+path (.*?) \(offset \d+\)',
+                      run('otool', '-l', str(binary)))
+
+
+def deduplicate_macos_rpaths(binary):
+    for path, count in Counter(macos_rpaths(binary)).items():
+        while count > 1:
+            run('install_name_tool', '-delete_rpath', path, str(binary))
+            remaining = macos_rpaths(binary).count(path)
+            if remaining >= count:
+                raise RuntimeError('Could not remove duplicate LC_RPATH from ' + str(binary))
+            count = remaining
+        if count == 0:
+            run('install_name_tool', '-add_rpath', path, str(binary))
 
 
 def bundle(source, destination, target):
@@ -44,7 +62,9 @@ def bundle(source, destination, target):
             run('dylibbundler', '-b', '-x', str(executable), '-d',
                 str(destination / 'lib'), '-p', '@executable_path/lib/')
         for library in sorted((destination / 'lib').glob('*')):
+            deduplicate_macos_rpaths(library)
             run('codesign', '--force', '--sign', '-', str(library))
+        deduplicate_macos_rpaths(executable)
         run('codesign', '--force', '--sign', '-', str(executable))
         formulas = [] if prebundled else ['mpv'] + run('brew', 'deps', '--formula', 'mpv').splitlines()
         for formula in formulas:
