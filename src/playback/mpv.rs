@@ -235,10 +235,16 @@ impl Mpv {
             next_id: AtomicU64::new(1),
             events,
         };
-        let bindings = engine.request(json!(["get_property", "input-bindings"]))?;
-        // Imported configs need the mouse default too, without overwriting an explicit binding.
-        if !super::input::has_binding(&bindings, "MBTN_RIGHT") {
-            engine.request(json!(["keybind", "MBTN_RIGHT", "cycle pause"]))?;
+        match engine.request(json!(["get_property", "input-bindings"])) {
+            Ok(bindings) => {
+                // Imported configs need the mouse default too, without overwriting an explicit binding.
+                if !super::input::has_binding(&bindings, "MBTN_RIGHT") {
+                    engine.request(json!(["keybind", "MBTN_RIGHT", "cycle pause"]))?;
+                }
+            }
+            // mpv 0.27 reads input.conf but cannot report its bindings over IPC.
+            Err(error) if error.to_string() == "mpv: \"property not found\"" => {}
+            Err(error) => return Err(error),
         }
         for (id, property) in [
             "pause",
