@@ -89,6 +89,8 @@ jobs:
           cargo +"$RUST_VERSION" test --locked --target '${{ matrix.target }}' --test ipc_smoke -- --ignored
       - name: Package
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           if [[ '${{ matrix.platform }}' == windows || '${{ matrix.target }}' == x86_64-apple-darwin ]]; then
             engine="$SEQUOIA_MPV_DIR"
@@ -165,9 +167,10 @@ jobs:
         env:
           UBUNTU_VERSION: ${{ matrix.version }}
           RUST_TARGET: ${{ matrix.target }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           docker run --rm \
-            -e RUST_VERSION -e RUST_TARGET -e UBUNTU_VERSION \
+            -e RUST_VERSION -e RUST_TARGET -e UBUNTU_VERSION -e GITHUB_TOKEN \
             -v "$GITHUB_WORKSPACE:/work" -w /work \
             "ubuntu:$UBUNTU_VERSION" bash scripts/ci-linux.sh
       - uses: actions/upload-artifact@v4

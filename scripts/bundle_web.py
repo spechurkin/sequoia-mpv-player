@@ -1,16 +1,23 @@
 """Cache verified stable yt-dlp and Deno releases; never runs in the player."""
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import time
 import urllib.request
+from urllib.parse import urlsplit
 import zipfile
 from pathlib import Path
 
 
 def fetch(url):
     request = urllib.request.Request(url, headers={'User-Agent': 'Sequoia-build'})
+    parsed = urlsplit(url)
+    if parsed.scheme == 'https' and parsed.netloc == 'api.github.com':
+        token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
+        if token:
+            request.add_unredirected_header('Authorization', 'Bearer ' + token)
     with urllib.request.urlopen(request, timeout=120) as response:
         return response.read()
 

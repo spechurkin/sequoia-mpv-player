@@ -21,6 +21,26 @@ runtime_spec.loader.exec_module(runtime)
 
 
 class PackagingTests(unittest.TestCase):
+    def test_web_release_token_is_limited_to_https_github_api(self):
+        web = package.bundle_web
+        with patch.dict(web.os.environ, {'GITHUB_TOKEN': 'test-token'}, clear=True):
+            for url, authenticated in [
+                ('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest', True),
+                ('https://github.com/yt-dlp/yt-dlp/releases/download/test/yt-dlp', False),
+                ('https://raw.githubusercontent.com/yt-dlp/yt-dlp/test/LICENSE', False),
+                ('https://api.github.com.example.org/releases/latest', False),
+                ('http://api.github.com/repos/yt-dlp/yt-dlp/releases/latest', False),
+            ]:
+                with self.subTest(url=url), patch.object(web.urllib.request, 'urlopen',
+                                                        return_value=io.BytesIO(b'content')) as fetch:
+                    self.assertEqual(web.fetch(url), b'content')
+                    request = fetch.call_args[0][0]
+                    self.assertEqual(request.get_header('Authorization'),
+                                     'Bearer test-token' if authenticated else None)
+                    redirected = web.urllib.request.HTTPRedirectHandler().redirect_request(
+                        request, None, 302, 'Found', {}, 'https://downloads.example.org/file')
+                    self.assertIsNone(redirected.get_header('Authorization'))
+
     def test_duplicate_macos_rpaths_keep_one_search_path(self):
         for deletes_all in [False, True]:
             with self.subTest(deletes_all=deletes_all):
