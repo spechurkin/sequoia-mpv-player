@@ -120,7 +120,7 @@ def collect_dependency_docs(executable_dir, docs):
         for path in list(dependency.iterdir()):
             if (path.name in ('doc', 'licenses') or
                     path.name.startswith(('LICENSE', 'COPYING')) or
-                    path.name.endswith('-LICENSE') or path.name == 'source-build.json'):
+                    path.name.endswith('-LICENSE') or path.name.endswith('source-build.json')):
                 destination = docs / name / path.name
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(path), str(destination))

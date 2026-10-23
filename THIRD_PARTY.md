@@ -33,7 +33,13 @@ The package includes a source-build.json with the pinned release, version, downl
 The build-only tools/unpack-mpv helper extracts the archive using sevenz-rust2 (Apache-2.0), without an external 7-Zip
 executable. Its dependencies are recorded separately in tools/unpack-mpv/Cargo.lock; the helper is not shipped to users.
 Linux CI takes mpv and its linked libraries from the target Ubuntu distribution and copies distribution copyright
-notices. macOS CI uses Homebrew mpv with dylibbundler and includes installed formula license files where available.
+notices. Apple Silicon macOS CI uses Homebrew mpv with dylibbundler and includes installed formula license files where available.
+Intel macOS CI uses the prebuilt mpv 0.35.0 bundle from https://laboratory.stolendata.net/~djinn/mpv_osx/,
+the upstream-listed distributor, to retain macOS 10.14 compatibility without compiling Homebrew dependencies.
+Its archive and SHA-256 are pinned in scripts/engine-runtime.json; its bundled library paths are preserved.
+Windows packages also include LunarG's Vulkan Loader 1.4.363.0 alongside mpv, including its license and
+download provenance. The x64 and ARM64 runtime archives are pinned in scripts/engine-runtime.json.
+Vulkan Loader source and licensing: https://github.com/KhronosGroup/Vulkan-Loader
 These build records do not replace the corresponding-source requirements above.
 
 Metadata services: MusicBrainz (https://musicbrainz.org), Cover Art Archive (https://coverartarchive.org). Availability

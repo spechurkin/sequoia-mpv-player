@@ -46,6 +46,11 @@ if ($LASTEXITCODE)
 {
     throw 'mpv extraction failed'
 }
+& python3 (Join-Path $PSScriptRoot 'fetch-engine-runtime.py') --target $Target --destination $directory
+if ($LASTEXITCODE)
+{
+    throw 'Vulkan Loader preparation failed'
+}
 @{ release = $runtime.release; version = $runtime.version; url = $url; sha256 = $expectedHash; recipes = $runtime.recipes } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $directory 'source-build.json')
 if ($env:GITHUB_ENV)

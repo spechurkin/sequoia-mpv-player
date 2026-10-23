@@ -34,12 +34,20 @@ def bundle(source, destination, target):
                     shutil.copy2(str(notice), str(destination / notice.name))
     elif macos:
         executable.chmod(0o755)
-        run('dylibbundler', '-b', '-x', str(executable), '-d',
-            str(destination / 'lib'), '-p', '@executable_path/lib/')
+        prebundled = (binary.parent / 'lib').is_dir()
+        if prebundled:
+            shutil.copytree(str(binary.parent / 'lib'), str(destination / 'lib'))
+            for notice in binary.parent.glob('*source*.json'):
+                shutil.copy2(str(notice), str(destination / notice.name))
+        else:
+            (destination / 'lib').mkdir()
+            run('dylibbundler', '-b', '-x', str(executable), '-d',
+                str(destination / 'lib'), '-p', '@executable_path/lib/')
         for library in sorted((destination / 'lib').glob('*')):
             run('codesign', '--force', '--sign', '-', str(library))
         run('codesign', '--force', '--sign', '-', str(executable))
-        for formula in ['mpv'] + run('brew', 'deps', '--formula', 'mpv').splitlines():
+        formulas = [] if prebundled else ['mpv'] + run('brew', 'deps', '--formula', 'mpv').splitlines()
+        for formula in formulas:
             cellar = Path(run('brew', '--prefix', formula).strip())
             for pattern in ('LICENSE*', 'COPYING*'):
                 for notice in cellar.glob(pattern):

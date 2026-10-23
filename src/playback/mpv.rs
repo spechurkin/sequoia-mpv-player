@@ -99,7 +99,6 @@ impl Mpv {
             "--video-osd=no",
             "--term-osd=force",
             "--term-osd-bar=no",
-            "--term-title=",
             "--term-playing-msg=",
             "--msg-color=no",
             "--msg-module=no",
@@ -118,7 +117,11 @@ impl Mpv {
             .arg(format!("--term-status-msg={}", super::osd::FRAME_END))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(if headless {
+                Stdio::inherit()
+            } else {
+                Stdio::null()
+            });
         if headless {
             cmd.args(["--vo=null", "--ao=null", "--force-window=no"]);
         } else if let Some(hwnd) = hwnd {

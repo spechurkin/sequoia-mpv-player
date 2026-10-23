@@ -69,15 +69,28 @@ jobs:
         shell: pwsh
         run: ./scripts/fetch-mpv.ps1 -Target '${{ matrix.target }}'
       - name: Prepare macOS playback engine
-        if: matrix.platform == 'macos'
+        if: matrix.platform == 'macos' && matrix.target == 'aarch64-apple-darwin'
+        timeout-minutes: 15
         run: |
           brew update
           brew install mpv dylibbundler
-          brew upgrade mpv dylibbundler
-      - name: Package
+      - name: Prepare Intel macOS playback engine
+        if: matrix.target == 'x86_64-apple-darwin'
+        timeout-minutes: 5
+        run: python3 scripts/fetch-engine-runtime.py --target '${{ matrix.target }}' --destination target/mpv-intel
+      - name: Test native playback IPC
         shell: bash
         run: |
           if [[ '${{ matrix.platform }}' == windows ]]; then
+            export PATH="$(cygpath -u "$SEQUOIA_MPV_DIR"):$PATH"
+          elif [[ '${{ matrix.target }}' == x86_64-apple-darwin ]]; then
+            export PATH="$(dirname "$SEQUOIA_MPV_DIR"):$PATH"
+          fi
+          cargo +"$RUST_VERSION" test --locked --target '${{ matrix.target }}' --test ipc_smoke -- --ignored
+      - name: Package
+        shell: bash
+        run: |
+          if [[ '${{ matrix.platform }}' == windows || '${{ matrix.target }}' == x86_64-apple-darwin ]]; then
             engine="$SEQUOIA_MPV_DIR"
           else
             engine="$(command -v mpv)"

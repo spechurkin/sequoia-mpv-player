@@ -1,7 +1,9 @@
 import hashlib
 import importlib.util
 import json
+import io
 import sys
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -13,9 +15,77 @@ sys.path.insert(0, str(SCRIPTS))
 spec = importlib.util.spec_from_file_location('package_ci', SCRIPTS / 'package-ci.py')
 package = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(package)
+runtime_spec = importlib.util.spec_from_file_location('engine_runtime', SCRIPTS / 'fetch-engine-runtime.py')
+runtime = importlib.util.module_from_spec(runtime_spec)
+runtime_spec.loader.exec_module(runtime)
 
 
 class PackagingTests(unittest.TestCase):
+    def test_vulkan_architecture_and_notices(self):
+        assets = json.loads((SCRIPTS / 'engine-runtime.json').read_text())
+        for target in ['x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc']:
+            asset = assets[target]
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                archive = root / 'runtime.zip'
+                architecture = asset['architecture'] + '/' if asset['architecture'] else ''
+                with zipfile.ZipFile(archive, 'w') as handle:
+                    handle.writestr(asset['prefix'] + '/' + architecture + 'vulkan-1.dll', target)
+                    handle.writestr(asset['prefix'] + '/VulkanRT-License.txt', 'license')
+                    handle.writestr(asset['prefix'] + '/x86/vulkan-1.dll', 'wrong architecture')
+                destination = root / 'mpv'
+                runtime.extract(asset, archive, destination, True)
+                self.assertEqual((destination / 'vulkan-1.dll').read_text(), target)
+                docs = root / 'docs'
+                (root / 'yt-dlp').mkdir()
+                package.collect_dependency_docs(root, docs)
+                self.assertTrue((docs / 'mpv/VulkanRT-LICENSE').is_file())
+                self.assertTrue((docs / 'mpv/vulkan-source-build.json').is_file())
+
+    def test_runtime_rejects_bad_checksum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            asset = {'sha256': '0' * 64, 'url': 'https://example.invalid/runtime'}
+            with patch.object(runtime.urllib.request, 'urlopen', return_value=io.BytesIO(b'corrupt')):
+                with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+                    runtime.fetch(asset, Path(directory))
+
+    def test_macos_bundler_destination_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source/mpv'
+            source.parent.mkdir()
+            source.write_bytes(b'executable')
+            destination = root / 'engine'
+
+            def run(*args, **kwargs):
+                if args[0] == 'dylibbundler':
+                    self.assertTrue(Path(args[args.index('-d') + 1]).is_dir())
+                if args[:2] == ('brew', '--prefix'):
+                    return str(root / 'formula')
+                return ''
+
+            with patch.object(package.bundle_mpv, 'run', side_effect=run) as command:
+                package.bundle_mpv.bundle(source, destination, 'aarch64-apple-darwin')
+            self.assertTrue(any(call.args[0] == 'dylibbundler' for call in command.call_args_list))
+
+    def test_prebuilt_macos_keeps_libraries_without_homebrew(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / 'mpv.tar.gz'
+            asset = {'prefix': 'mpv.app/Contents/MacOS'}
+            with tarfile.open(archive, 'w:gz') as handle:
+                for name, data in [('mpv', b'executable'), ('lib/libavcodec.dylib', b'library')]:
+                    member = tarfile.TarInfo(asset['prefix'] + '/' + name)
+                    member.size = len(data)
+                    member.mode = 0o755
+                    handle.addfile(member, io.BytesIO(data))
+            runtime.extract(asset, archive, root / 'source', False)
+            with patch.object(package.bundle_mpv, 'run') as command:
+                package.bundle_mpv.bundle(root / 'source/mpv', root / 'engine', 'x86_64-apple-darwin')
+            self.assertEqual((root / 'engine/lib/libavcodec.dylib').read_bytes(), b'library')
+            self.assertTrue((root / 'engine/source-build.json').is_file())
+            self.assertTrue(all(call.args[0] == 'codesign' for call in command.call_args_list))
+
     def test_windows_update_manifest_and_archive(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
