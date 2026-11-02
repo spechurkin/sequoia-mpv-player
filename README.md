@@ -61,8 +61,8 @@ included `sequoia` executable. Keep the bundled folders in their original locati
 
 ## 3. Add Sequoia to Windows
 
-This step is optional. It adds a Start menu shortcut, an entry in installed apps, and Sequoia as a choice in **Open with
-** and **Default apps**.
+This step is optional. It adds a Start menu shortcut, an entry in installed apps, and Sequoia as a choice in **Open with**
+and **Default apps**.
 
 1. Put the extracted application folder in its permanent location.
 2. Run `installers\install.cmd` inside that folder. The script registers the files where they are; it does not copy them
