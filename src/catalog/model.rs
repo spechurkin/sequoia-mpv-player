@@ -151,6 +151,11 @@ impl Queue {
         self.select(index);
     }
     pub fn select(&mut self, index: usize) {
+        self.history.clear();
+        self.visited.clear();
+        self.visit(index);
+    }
+    fn visit(&mut self, index: usize) {
         self.index = if self.items.is_empty() {
             None
         } else {
@@ -178,20 +183,29 @@ impl Queue {
                 choices = (0..self.items.len()).filter(|i| *i != current).collect();
             }
             choices.choose(&mut rand::rng()).copied().unwrap_or(current)
-        } else if current + 1 < self.items.len() {
-            current + 1
-        } else if self.repeat == Repeat::All {
-            0
         } else {
-            return None;
+            let next = (1..=self.items.len())
+                .map(|offset| (current + offset) % self.items.len())
+                .find(|i| !self.visited.contains(i));
+            match next {
+                Some(next) => next,
+                None if self.repeat == Repeat::All => {
+                    self.visited.clear();
+                    (current + 1) % self.items.len()
+                }
+                None => return None,
+            }
         };
         self.history.push(current);
-        self.select(next);
+        self.visit(next);
         self.current().cloned()
     }
     pub fn previous(&mut self) -> Option<Media> {
         let i = self.history.pop().unwrap_or(self.index?.saturating_sub(1));
-        self.select(i);
+        if !self.shuffle {
+            self.visited.remove(&self.index?);
+        }
+        self.visit(i);
         self.current().cloned()
     }
     pub fn move_item(&mut self, from: usize, to: usize) {

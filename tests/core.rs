@@ -31,6 +31,52 @@ fn sequential_queue_ends() {
     assert_eq!(q.index, Some(4));
 }
 #[test]
+fn sequential_queue_from_any_selection_plays_remaining_tracks_once() {
+    for start in 0..5 {
+        let mut q = Queue::default();
+        q.replace(tracks(), start);
+        let mut played = vec![q.current().unwrap().path.clone()];
+        while let Some(item) = q.advance(true) {
+            played.push(item.path);
+            assert!(played.len() <= 5, "queue must finish without repeat");
+        }
+        let expected: Vec<_> = (0..5)
+            .map(|offset| tracks()[(start + offset) % 5].path.clone())
+            .collect();
+        assert_eq!(played, expected);
+    }
+}
+#[test]
+fn selecting_a_track_restarts_navigation_after_queue_exhaustion() {
+    for shuffle in [false, true] {
+        let mut q = Queue::default();
+        q.replace(tracks(), 0);
+        q.shuffle = shuffle;
+        for _ in 0..4 {
+            assert!(q.advance(true).is_some());
+        }
+        assert!(q.advance(true).is_none());
+        q.select(4);
+        let mut seen = std::collections::HashSet::from([q.current().unwrap().path.clone()]);
+        for _ in 0..4 {
+            assert!(seen.insert(q.advance(true).unwrap().path));
+        }
+        assert!(q.advance(true).is_none());
+    }
+}
+#[test]
+fn previous_across_sequential_wrap_allows_forward_playback() {
+    let mut q = Queue::default();
+    q.replace(tracks(), 4);
+    assert_eq!(q.advance(true).unwrap().title, "Track 0");
+    assert_eq!(q.previous().unwrap().title, "Track 4");
+    assert_eq!(q.advance(true).unwrap().title, "Track 0");
+    for _ in 0..3 {
+        assert!(q.advance(true).is_some());
+    }
+    assert!(q.advance(true).is_none());
+}
+#[test]
 fn repeat_one_only_automatic() {
     let mut q = Queue::default();
     q.replace(tracks(), 2);
