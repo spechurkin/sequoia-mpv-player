@@ -1768,9 +1768,9 @@ impl Player {
         };
         let mut open = true;
         let mut save = false;
-        egui::Window::new(sequoia::i18n::t("text.tags_and_cover")).open(&mut open).default_width(700.).collapsible(false).show(ctx, |ui| {
+        egui::Window::new(sequoia::i18n::t("text.tags_and_cover")).open(&mut open).default_width(700.).resizable([true, false]).collapsible(false).show(ctx, |ui| {
             ui.label(RichText::new(editor.media.path.display().to_string()).small().color(MUTED));
-            egui::ScrollArea::vertical().max_height(580.).show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height((ctx.screen_rect().height() - 160.).clamp(120., 580.)).show(ui, |ui| {
                 ui.add_enabled_ui(!editor.saving, |ui| {
                     egui::Grid::new("tag-fields").num_columns(2).spacing([14., 10.]).show(ui, |ui| {
                         for (label, field) in [(sequoia::i18n::t("text.title"), &mut editor.media.title), (sequoia::i18n::t("text.artist"), &mut editor.media.artist), (sequoia::i18n::t("text.album"), &mut editor.media.album), (sequoia::i18n::t("text.album_artist"), &mut editor.media.album_artist), (sequoia::i18n::t("text.grouping"), &mut editor.media.grouping), (sequoia::i18n::t("text.genre"), &mut editor.media.genre)] {
@@ -1851,7 +1851,7 @@ impl Player {
             });
             ui.separator();
             ui.label(RichText::new(sequoia::i18n::t("text.writing_tags_does_not_interrupt_playback_the_original_will_be_saved_in_tag")).small().color(MUTED));
-            if ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), ui.spacing().interact_size.y), egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_enabled(!editor.saving && !editor.searching, egui::Button::new(RichText::new(sequoia::i18n::t("text.write_tags_to_file")).color(ACCENT)))
             }).inner.clicked() { save = true; }
             if editor.saving { ui.spinner(); }
