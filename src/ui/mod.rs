@@ -1125,8 +1125,10 @@ impl Player {
                     let slider = ui
                         .scope(|ui| {
                             ui.spacing_mut().slider_width = (ui.available_width() - 62.).max(100.);
+                            ui.visuals_mut().selection.bg_fill = ACCENT;
                             ui.add(
                                 egui::Slider::new(&mut position, 0.0..=self.duration.max(0.01))
+                                    .trailing_fill(true)
                                     .show_value(false),
                             )
                         })
