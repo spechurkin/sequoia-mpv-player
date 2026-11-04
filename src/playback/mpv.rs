@@ -33,11 +33,22 @@ struct Completion {
     reported: bool,
 }
 impl Completion {
+    fn command(&mut self, command: &Value) {
+        let replaces = command[0] == "loadfile"
+            && (command[2].is_null() || command[2] == "replace");
+        if replaces || command[0] == "stop" || command[0] == "quit" {
+            self.reported = true;
+        }
+    }
+
     fn observe(&mut self, message: &Value) -> bool {
         if message["event"] == "start-file" {
             self.reported = false;
         }
-        let ended = (message["event"] == "end-file" && message["reason"] == "eof")
+        // mpv 0.27/0.32 omit the reason from IPC end-file events. App-issued
+        // stops and replacements suppress completion until the next start-file.
+        let ended = (message["event"] == "end-file"
+            && (message["reason"] == "eof" || message.get("reason").is_none()))
             || (message["event"] == "property-change"
                 && message["name"] == "eof-reached"
                 && message["data"] == true);
@@ -80,12 +91,40 @@ mod completion_tests {
             assert!(!completion.observe(&message));
         }
     }
+
+    #[test]
+    fn legacy_end_file_advances_once_and_suppresses_requested_stops() {
+        let end = json!({"event":"end-file"});
+        let start = json!({"event":"start-file"});
+        for command in [json!(["stop"]), json!(["quit"]),
+            json!(["loadfile", "next.wav"]), json!(["loadfile", "next.wav", "replace"])] {
+            let mut completion = Completion::default();
+            completion.observe(&start);
+            completion.command(&command);
+            assert!(!completion.observe(&end));
+            completion.observe(&start);
+            assert!(completion.observe(&end));
+            assert!(!completion.observe(&end));
+        }
+    }
+
+    #[test]
+    fn appending_and_seeking_do_not_suppress_legacy_completion() {
+        for command in [json!(["loadfile", "next.wav", "append"]),
+            json!(["loadfile", "next.wav", "append-play"]),
+            json!(["seek", 10, "absolute+exact"]), json!(["set_property", "pause", true])] {
+            let mut completion = Completion::default();
+            completion.command(&command);
+            assert!(completion.observe(&json!({"event":"end-file"})));
+        }
+    }
 }
 type Pending = Arc<Mutex<HashMap<u64, mpsc::Sender<std::result::Result<Value, String>>>>>;
 pub struct Mpv {
     child: Child,
     writer: Arc<Mutex<IpcStream>>,
     pending: Pending,
+    completion: Arc<Mutex<Completion>>,
     next_id: AtomicU64,
     pub events: mpsc::Receiver<Event>,
 }
@@ -214,11 +253,12 @@ impl Mpv {
         reader.set_read_timeout(Some(Duration::from_millis(100)))?;
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
         let read_pending = pending.clone();
+        let completion = Arc::new(Mutex::new(Completion::default()));
+        let read_completion = completion.clone();
         thread::spawn(move || {
             #[cfg(unix)]
             let _socket_dir = socket_dir;
             let mut buffered = Vec::new();
-            let mut completion = Completion::default();
             // Synchronous Windows pipe handles serialize I/O. Read only available bytes,
             // so the reader never blocks a concurrent command write on the duplicated handle.
             while let Ok(available) = pipe_available(&reader) {
@@ -261,7 +301,7 @@ impl Mpv {
                             let _ = tx.send(Event::Error(crate::i18n::format("text.mpv_command_rejected", &[("arg0", format!("{}", msg["error"]))])));
                         }
                     }
-                    if completion.observe(&msg) {
+                    if read_completion.lock().unwrap().observe(&msg) {
                         let _ = tx.send(Event::Eof);
                     }
                     match msg["event"].as_str() {
@@ -287,6 +327,7 @@ impl Mpv {
             child,
             writer: Arc::new(Mutex::new(file)),
             pending,
+            completion,
             next_id: AtomicU64::new(1),
             events,
         };
@@ -325,6 +366,7 @@ impl Mpv {
         let msg =
             json!({"command": command, "request_id": self.next_id.fetch_add(1, Ordering::Relaxed)});
         let mut file = self.writer.lock().unwrap();
+        self.completion.lock().unwrap().command(&msg["command"]);
         writeln!(file, "{msg}")?;
         file.flush()?;
         Ok(())
@@ -335,6 +377,7 @@ impl Mpv {
         self.pending.lock().unwrap().insert(id, tx);
         let write = (|| -> Result<()> {
             let mut file = self.writer.lock().unwrap();
+            self.completion.lock().unwrap().command(&command);
             writeln!(file, "{}", json!({"command":command,"request_id":id}))?;
             file.flush()?;
             Ok(())

@@ -48,6 +48,39 @@ fn real_mpv_ipc_load_pause_seek_and_shutdown() -> anyhow::Result<()> {
 
 #[test]
 #[ignore = "requires installed mpv"]
+fn stop_and_replace_do_not_complete_current_file() -> anyhow::Result<()> {
+    use sequoia::mpv::Event;
+    use std::time::{Duration, Instant};
+
+    let directory = tempfile::tempdir()?;
+    let wave = directory.path().join("silence.wav");
+    write_silence(&wave)?;
+    let executable = sequoia::mpv::resolve(Path::new("")).expect("mpv installed");
+    let engine = sequoia::mpv::Mpv::start(&executable, None, directory.path(), true)?;
+    for command in [json!(["stop"]), json!(["loadfile", wave, "replace"])] {
+        engine.request(json!(["loadfile", wave, "replace"]))?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while engine.request(json!(["get_property", "time-pos"]))
+            .ok().and_then(|v| v.as_f64()).is_none_or(|v| v < 0.1) {
+            anyhow::ensure!(Instant::now() < deadline, "playback did not start");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        engine.request(command)?;
+        let deadline = Instant::now() + Duration::from_millis(300);
+        while let Ok(event) = engine.events.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            match event {
+                Event::Eof => anyhow::bail!("stop/replace must not advance the queue"),
+                Event::Error(error) => anyhow::bail!("{error}"),
+                Event::Disconnected => anyhow::bail!("engine disconnected"),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires installed mpv"]
 fn manual_navigation_then_seek_to_end_continues_queue() -> anyhow::Result<()> {
     use sequoia::{model::{Media, Queue}, mpv::{Event, Mpv}};
     use std::time::{Duration, Instant};
@@ -72,15 +105,20 @@ fn manual_navigation_then_seek_to_end_continues_queue() -> anyhow::Result<()> {
         let mut completed = std::collections::HashSet::new();
         loop {
             assert!(completed.insert(queue.index.unwrap()), "duplicate playback");
+            engine.request(json!(["stop"]))?;
+            engine.events.try_iter().for_each(drop);
             engine.request(json!(["loadfile", queue.current().unwrap().path, "replace"]))?;
             engine.request(json!(["set_property", "pause", false]))?;
             let deadline = Instant::now() + Duration::from_secs(5);
-            while engine.request(json!(["get_property", "duration"]))
-                .ok().and_then(|v| v.as_f64()).is_none_or(|v| v < 9.9) {
-                anyhow::ensure!(Instant::now() < deadline, "file did not load");
+            // Duration is available before decoding starts. Seeking to EOF then can
+            // produce "no audio or video data played" instead of normal completion.
+            while engine.request(json!(["get_property", "time-pos"]))
+                .ok().and_then(|v| v.as_f64()).is_none_or(|v| v < 0.1) {
+                anyhow::ensure!(Instant::now() < deadline, "playback did not start");
                 std::thread::sleep(Duration::from_millis(20));
             }
             engine.request(json!(["seek", 10, "absolute+exact"]))?;
+            let deadline = Instant::now() + Duration::from_secs(5);
             loop {
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 match engine.events.recv_timeout(remaining)? {
