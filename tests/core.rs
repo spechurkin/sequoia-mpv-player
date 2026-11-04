@@ -85,6 +85,45 @@ fn repeat_one_only_automatic() {
     assert_eq!(q.advance(false).unwrap().title, "Track 3");
 }
 #[test]
+fn manual_skips_do_not_exhaust_automatic_playback() {
+    for shuffle in [false, true] {
+        let mut q = Queue::default();
+        q.replace(tracks(), 0);
+        q.shuffle = shuffle;
+        for _ in 0..12 {
+            let previous = q.current().unwrap().path.clone();
+            assert_ne!(q.advance(false).unwrap().path, previous);
+        }
+        let mut seen = std::collections::HashSet::from([q.current().unwrap().path.clone()]);
+        for _ in 0..4 {
+            assert!(seen.insert(q.advance(true).unwrap().path));
+        }
+        assert!(q.advance(true).is_none());
+        assert!(q.advance(false).is_some());
+        assert!(q.advance(true).is_some());
+    }
+}
+#[test]
+fn previous_restarts_automatic_traversal_and_preserves_history() {
+    for shuffle in [false, true] {
+        let mut q = Queue::default();
+        q.replace(tracks(), 0);
+        q.shuffle = shuffle;
+        let mut played = vec![q.current().unwrap().clone()];
+        for _ in 0..4 {
+            played.push(q.advance(true).unwrap());
+        }
+        assert!(q.advance(true).is_none());
+        assert_eq!(q.previous(), Some(played[3].clone()));
+        assert_eq!(q.previous(), Some(played[2].clone()));
+        let mut seen = std::collections::HashSet::from([q.current().unwrap().path.clone()]);
+        for _ in 0..4 {
+            assert!(seen.insert(q.advance(true).unwrap().path));
+        }
+        assert!(q.advance(true).is_none());
+    }
+}
+#[test]
 fn repeat_all_wraps() {
     let mut q = Queue::default();
     q.replace(tracks(), 4);

@@ -1,12 +1,8 @@
 use serde_json::json;
 use std::{io::Write, path::Path};
 
-#[test]
-#[ignore = "requires installed mpv"]
-fn real_mpv_ipc_load_pause_seek_and_shutdown() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let wave = directory.path().join("silence.wav");
-    let mut file = std::fs::File::create(&wave)?;
+fn write_silence(wave: &Path) -> anyhow::Result<()> {
+    let mut file = std::fs::File::create(wave)?;
     let samples = 8000u32 * 10;
     file.write_all(b"RIFF")?;
     file.write_all(&(36 + samples * 2).to_le_bytes())?;
@@ -17,6 +13,15 @@ fn real_mpv_ipc_load_pause_seek_and_shutdown() -> anyhow::Result<()> {
     file.write_all(&(samples * 2).to_le_bytes())?;
     file.write_all(&vec![0u8; samples as usize * 2])?;
     drop(file);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires installed mpv"]
+fn real_mpv_ipc_load_pause_seek_and_shutdown() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let wave = directory.path().join("silence.wav");
+    write_silence(&wave)?;
     let executable = sequoia::mpv::resolve(Path::new("")).expect("mpv installed");
     let engine = sequoia::mpv::Mpv::start(&executable, None, directory.path(), true)?;
     engine.request(json!(["set_property", "pause", true]))?;
@@ -38,5 +43,57 @@ fn real_mpv_ipc_load_pause_seek_and_shutdown() -> anyhow::Result<()> {
     engine.request(json!(["seek", 2, "absolute+exact"]))?;
     engine.request(json!(["stop"]))?;
     drop(engine);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires installed mpv"]
+fn manual_navigation_then_seek_to_end_continues_queue() -> anyhow::Result<()> {
+    use sequoia::{model::{Media, Queue}, mpv::{Event, Mpv}};
+    use std::time::{Duration, Instant};
+
+    let directory = tempfile::tempdir()?;
+    let wave = directory.path().join("silence.wav");
+    write_silence(&wave)?;
+    let executable = sequoia::mpv::resolve(Path::new("")).expect("mpv installed");
+    let engine = Mpv::start(&executable, None, directory.path(), true)?;
+    for shuffle in [false, true] {
+        let mut queue = Queue::default();
+        queue.replace((0..3).map(|i| Media {
+            path: wave.clone(), title: format!("Track {i}"), audio: true,
+            ..Default::default()
+        }).collect(), 2);
+        queue.shuffle = shuffle;
+        for _ in 0..8 {
+            assert!(queue.advance(false).is_some());
+        }
+        assert!(queue.previous().is_some());
+        let mut completed = std::collections::HashSet::new();
+        loop {
+            assert!(completed.insert(queue.index.unwrap()), "duplicate playback");
+            engine.request(json!(["loadfile", queue.current().unwrap().path, "replace"]))?;
+            engine.request(json!(["set_property", "pause", false]))?;
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while engine.request(json!(["get_property", "duration"]))
+                .ok().and_then(|v| v.as_f64()).is_none_or(|v| v < 9.9) {
+                anyhow::ensure!(Instant::now() < deadline, "file did not load");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            engine.request(json!(["seek", 10, "absolute+exact"]))?;
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                match engine.events.recv_timeout(remaining)? {
+                    Event::Eof => break,
+                    Event::Error(error) => anyhow::bail!("{error}"),
+                    Event::Disconnected => anyhow::bail!("engine disconnected"),
+                    _ => {}
+                }
+            }
+            if queue.advance(true).is_none() {
+                break;
+            }
+        }
+        assert_eq!(completed.len(), 3, "seek must continue through remaining tracks");
+    }
     Ok(())
 }

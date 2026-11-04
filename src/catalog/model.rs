@@ -175,7 +175,7 @@ impl Queue {
                 .filter(|i| !self.visited.contains(i))
                 .collect();
             if choices.is_empty() {
-                if self.repeat != Repeat::All {
+                if automatic && self.repeat != Repeat::All {
                     return None;
                 }
                 self.visited.clear();
@@ -189,7 +189,7 @@ impl Queue {
                 .find(|i| !self.visited.contains(i));
             match next {
                 Some(next) => next,
-                None if self.repeat == Repeat::All => {
+                None if !automatic || self.repeat == Repeat::All => {
                     self.visited.clear();
                     (current + 1) % self.items.len()
                 }
@@ -197,14 +197,15 @@ impl Queue {
             }
         };
         self.history.push(current);
+        if !automatic {
+            self.visited.clear();
+        }
         self.visit(next);
         self.current().cloned()
     }
     pub fn previous(&mut self) -> Option<Media> {
         let i = self.history.pop().unwrap_or(self.index?.saturating_sub(1));
-        if !self.shuffle {
-            self.visited.remove(&self.index?);
-        }
+        self.visited.clear();
         self.visit(i);
         self.current().cloned()
     }
