@@ -27,6 +27,60 @@ pub enum Event {
     Error(String),
     Disconnected,
 }
+
+#[derive(Default)]
+struct Completion {
+    reported: bool,
+}
+impl Completion {
+    fn observe(&mut self, message: &Value) -> bool {
+        if message["event"] == "start-file" {
+            self.reported = false;
+        }
+        let ended = (message["event"] == "end-file" && message["reason"] == "eof")
+            || (message["event"] == "property-change"
+                && message["name"] == "eof-reached"
+                && message["data"] == true);
+        if ended && !self.reported {
+            self.reported = true;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+
+    #[test]
+    fn held_open_eof_and_end_file_report_once_in_either_order() {
+        let property = json!({"event":"property-change", "name":"eof-reached", "data":true});
+        let end = json!({"event":"end-file", "reason":"eof"});
+        for messages in [[&property, &end], [&end, &property]] {
+            let mut completion = Completion::default();
+            assert!(completion.observe(messages[0]));
+            assert!(!completion.observe(messages[1]));
+            assert!(!completion.observe(&property));
+            assert!(!completion.observe(&json!({"event":"start-file"})));
+            assert!(completion.observe(&property));
+        }
+    }
+
+    #[test]
+    fn pause_stop_and_errors_are_not_completion() {
+        let mut completion = Completion::default();
+        for message in [
+            json!({"event":"property-change", "name":"pause", "data":true}),
+            json!({"event":"property-change", "name":"eof-reached", "data":false}),
+            json!({"event":"end-file", "reason":"stop"}),
+            json!({"event":"end-file", "reason":"error"}),
+        ] {
+            assert!(!completion.observe(&message));
+        }
+    }
+}
 type Pending = Arc<Mutex<HashMap<u64, mpsc::Sender<std::result::Result<Value, String>>>>>;
 pub struct Mpv {
     child: Child,
@@ -164,6 +218,7 @@ impl Mpv {
             #[cfg(unix)]
             let _socket_dir = socket_dir;
             let mut buffered = Vec::new();
+            let mut completion = Completion::default();
             // Synchronous Windows pipe handles serialize I/O. Read only available bytes,
             // so the reader never blocks a concurrent command write on the duplicated handle.
             while let Ok(available) = pipe_available(&reader) {
@@ -206,15 +261,15 @@ impl Mpv {
                             let _ = tx.send(Event::Error(crate::i18n::format("text.mpv_command_rejected", &[("arg0", format!("{}", msg["error"]))])));
                         }
                     }
+                    if completion.observe(&msg) {
+                        let _ = tx.send(Event::Eof);
+                    }
                     match msg["event"].as_str() {
                         Some("property-change") => {
                             let _ = tx.send(Event::Property(
                                 msg["name"].as_str().unwrap_or_default().into(),
                                 msg["data"].clone(),
                             ));
-                        }
-                        Some("end-file") if msg["reason"] == "eof" => {
-                            let _ = tx.send(Event::Eof);
                         }
                         Some("end-file") if msg["reason"] == "error" => {
                             let _ = tx.send(Event::Error(crate::i18n::format("text.failed_to_play_file", &[("arg0", format!("{}", msg["file_error"]))])));
@@ -256,6 +311,7 @@ impl Mpv {
             "track-list",
             "chapter-list",
             "media-title",
+            "eof-reached",
         ]
             .iter()
             .enumerate()

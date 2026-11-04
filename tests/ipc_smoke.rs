@@ -57,7 +57,8 @@ fn manual_navigation_then_seek_to_end_continues_queue() -> anyhow::Result<()> {
     write_silence(&wave)?;
     let executable = sequoia::mpv::resolve(Path::new("")).expect("mpv installed");
     let engine = Mpv::start(&executable, None, directory.path(), true)?;
-    for shuffle in [false, true] {
+    for (shuffle, keep_open) in [(false, false), (true, false), (false, true), (true, true)] {
+        engine.request(json!(["set_property", "keep-open", keep_open]))?;
         let mut queue = Queue::default();
         queue.replace((0..3).map(|i| Media {
             path: wave.clone(), title: format!("Track {i}"), audio: true,
@@ -89,6 +90,9 @@ fn manual_navigation_then_seek_to_end_continues_queue() -> anyhow::Result<()> {
                     _ => {}
                 }
             }
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(!engine.events.try_iter().any(|event| matches!(event, Event::Eof)),
+                "one file must not advance the queue twice");
             if queue.advance(true).is_none() {
                 break;
             }
